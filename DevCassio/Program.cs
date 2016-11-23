@@ -25,7 +25,10 @@ using SharpDX;
  * + R to Save Yourself, when MinHealth and Enemy IsFacing
  * + Auto Spell Level UP
  * + Play Legit Menu :)
- * 
+ * done harass e, last hit,jungle no du use e,check gap close. 
+ * --------------------------------------------------------------------------------------------
+ *  - block r, check mim R enemym, fix e dmg
+ *  +add gap close W, flee, Q,W,E, rocket r, flash r
 */
 
 namespace DevCassio
@@ -34,6 +37,7 @@ namespace DevCassio
     {
         public const string ChampionName = "cassiopeia";
 
+        public static Items.Item Belt = new Items.Item(3150, 800);
         public static Menu Config;
         public static Orbwalking.Orbwalker Orbwalker;
         public static List<Spell> SpellList = new List<Spell>();
@@ -43,7 +47,7 @@ namespace DevCassio
         public static Spell E;
         public static Spell R;
         public static List<Obj_AI_Base> MinionList;
-        public static SkinManager skinManager;
+        /*public static SkinManager skinManager;*/
         public static LevelUpManager levelUpManager;
         public static AssemblyUtil assemblyUtil;
         public static SummonerSpellManager summonerSpellManager;
@@ -73,16 +77,29 @@ namespace DevCassio
                         break;
                     case Orbwalking.OrbwalkingMode.Mixed:
                         Harass();
+                        LastHit();
                         break;
                     case Orbwalking.OrbwalkingMode.LaneClear:
                         JungleClear();
                         WaveClear();
+                        LastHit();
                         break;
                     case Orbwalking.OrbwalkingMode.LastHit:
-                        Freeze();
+                        LastHit();
+
                         break;
                     default:
                         break;
+                }
+
+                if (Config.Item("Rflash").GetValue<KeyBind>().Active)
+                {
+                    FlashCombo();
+                }
+
+                if (Config.Item("UseSkin").GetValue<bool>())
+                {
+                    Player.SetSkin(Player.CharData.BaseSkinName, Config.Item("SkinID").GetValue<Slider>().Value);
                 }
 
                 if (Config.Item("HarassToggle").GetValue<KeyBind>().Active)
@@ -90,7 +107,7 @@ namespace DevCassio
                 
                 UseUltUnderTower();
 
-                skinManager.Update();
+                /*skinManager.Update();*/
 
                 levelUpManager.Update();
 
@@ -173,8 +190,50 @@ namespace DevCassio
             }
         }
 
+        private static void FlashCombo()
+        {
+            var rTarget = TargetSelector.GetTarget(R.Range, TargetSelector.DamageType.Magical);
+            if (rTarget == null && R.IsReady() && Player.Spellbook.CanUseSpell(Player.GetSpellSlot("SummonerFlash")) == SpellState.Ready)
+            {
+                int minr = Config.Item("Rminflash").GetValue<Slider>().Value;
+
+                if (minr > 1)
+                {
+                    foreach (
+                            PredictionOutput pred in
+                                ObjectManager.Get<Obj_AI_Hero>()
+                                    .Where(x => x.IsValidTarget(R.Range))
+                                    .Select(x => R.GetPrediction(x, true))
+                                    .Where(pred => pred.Hitchance >= HitChance.High && pred.AoeTargetsHitCount >= minr)
+                            )
+                    {
+                        PredictionOutput pred1 = pred;
+                        Player.Spellbook.CastSpell(Player.GetSpellSlot("SummonerFlash"), pred1.CastPosition);
+                        Utility.DelayAction.Add(10, () => R.Cast(pred1.CastPosition));
+                    }
+                }
+                else
+                {
+                    Obj_AI_Hero target = TargetSelector.GetTarget(
+                        R.Range,
+                        TargetSelector.DamageType.Magical);
+                    if (target != null)
+                    {
+                        Player.Spellbook.CastSpell(Player.GetSpellSlot("SummonerFlash"), target.Position);
+                        Utility.DelayAction.Add(50, () => R.Cast(target.Position));
+                    }
+                }
+            }
+            if (Orbwalking.CanMove(100))
+            {
+                Orbwalking.MoveTo(Game.CursorPos, 80f);
+                Combo();
+            }
+        }
+
         public static void Combo()
         {
+
             var eTarget = TargetSelector.GetTarget(W.Range, TargetSelector.DamageType.Magical);
 
             if (eTarget == null)
@@ -197,7 +256,7 @@ namespace DevCassio
             {
                 if (Player.GetHealthPerc() < UseRSaveYourselfMinHealth && eTarget.IsFacing(Player) && !eTarget.IsInvulnerable)
                 {
-                    R.Cast(eTarget, packetCast, true);
+                    R.Cast(eTarget, true);
                     if (dtLastSaveYourself + 3000 < Environment.TickCount)
                     {
                         Game.PrintChat("Save Yourself!");
@@ -216,22 +275,22 @@ namespace DevCassio
                     Game.PrintChat("Hit:{0} Facing:{1}", enemiesHit.Count(), enemiesFacing.Count());
 
                 if (enemiesHit.Count() >= RMinHit && enemiesFacing.Count() >= RMinHitFacing)
-                    R.Cast(castPred.CastPosition, packetCast);
+                    R.Cast(castPred.CastPosition);
             }
                 
             if (E.IsReady() && useE)
             {
                 var eTargetCastE = TargetSelector.GetTarget(E.Range, TargetSelector.DamageType.Magical);
-
-                if (eTargetCastE.HasBuffOfType(BuffType.Poison))
-                { 
-                    // keep priority target
-                }
-                else
+                if (eTargetCastE != null && eTargetCastE.HasBuffOfType(BuffType.Poison))
                 {
                     var query = DevHelper.GetEnemyList().Where(x => x.IsValidTarget(E.Range) && x.HasBuffOfType(BuffType.Poison));
                     if (query.Any())
                         eTargetCastE = query.First();
+                }
+                else
+                if (eTargetCastE != null && eTargetCastE.IsValidTarget(E.Range) && !eTargetCastE.IsZombie)
+                {
+                    CastE(eTarget);
                 }
 
                 if (eTargetCastE != null)
@@ -248,13 +307,13 @@ namespace DevCassio
 
             if (eTarget.IsValidTarget(Q.Range) && Q.IsReady() && useQ)
             {
-                if (Q.Cast(eTarget, packetCast, true) == Spell.CastStates.SuccessfullyCasted)
+                if (Q.Cast(eTarget, true) == Spell.CastStates.SuccessfullyCasted)
                     dtLastQCast = Environment.TickCount;
             }
 
             if (W.IsReady() && useW)
             {
-                W.CastIfHitchanceEquals(eTarget, HitChance.High, packetCast);
+                W.CastIfHitchanceEquals(eTarget, HitChance.High);
             }
 
             if (useW)
@@ -262,7 +321,7 @@ namespace DevCassio
 
             if (W.IsReady() && useW && Environment.TickCount > dtLastQCast + Q.Delay * 1000)
             {
-                W.CastIfHitchanceEquals(eTarget, eTarget.IsMoving ? HitChance.High : HitChance.Medium, packetCast);
+                W.CastIfHitchanceEquals(eTarget, eTarget.IsMoving ? HitChance.High : HitChance.Medium);
             }
 
             double igniteDamage = summonerSpellManager.GetIgniteDamage(eTarget) + (Player.GetSpellDamage(eTarget, SpellSlot.E) * 2);
@@ -292,7 +351,7 @@ namespace DevCassio
             {
                 var eTargetCastE = TargetSelector.GetTarget(E.Range, TargetSelector.DamageType.Magical);
 
-                if (eTargetCastE.HasBuffOfType(BuffType.Poison))
+                if (eTargetCastE != null && eTargetCastE.HasBuffOfType(BuffType.Poison))
                 {
                     // keep priority target
                 }
@@ -315,15 +374,24 @@ namespace DevCassio
                 }
             }
 
-            if (eTarget.IsValidTarget(Q.Range) && Q.IsReady() && useQ)
+            if (E.IsReady() && useE)
             {
-                if (Q.Cast(eTarget, packetCast, true) == Spell.CastStates.SuccessfullyCasted)
+                var eTargetCastE = TargetSelector.GetTarget(E.Range, TargetSelector.DamageType.Magical);
+
+                if (eTargetCastE != null && eTargetCastE.IsValidTarget(E.Range) && !eTargetCastE.IsZombie)
+                {
+                    CastE(eTarget);
+                }
+            }
+                if (eTarget.IsValidTarget(Q.Range) && Q.IsReady() && useQ)
+            {
+                if (Q.Cast(eTarget, true) == Spell.CastStates.SuccessfullyCasted)
                     dtLastQCast = Environment.TickCount;
             }
 
             if (W.IsReady() && useW)
             {
-                W.CastIfHitchanceEquals(eTarget, HitChance.High, packetCast);
+                W.CastIfHitchanceEquals(eTarget, HitChance.High);
             }
 
             if (useW)
@@ -331,7 +399,7 @@ namespace DevCassio
 
             if (W.IsReady() && useW && Environment.TickCount > dtLastQCast + Q.Delay * 1000)
             {
-                W.CastIfHitchanceEquals(eTarget, eTarget.IsMoving ? HitChance.High : HitChance.Medium, packetCast);
+                W.CastIfHitchanceEquals(eTarget, eTarget.IsMoving ? HitChance.High : HitChance.Medium);
             }
         }
 
@@ -355,7 +423,7 @@ namespace DevCassio
                     var farmNonPoisoned = Q.GetCircularFarmLocation(allMinionsQNonPoisoned, Q.Width * 0.8f);
                     if (farmNonPoisoned.MinionsHit >= 3)
                     {
-                        Q.Cast(farmNonPoisoned.Position, packetCast);
+                        Q.Cast(farmNonPoisoned.Position);
                         dtLastQCast = Environment.TickCount;
                         return;
                     }
@@ -366,7 +434,7 @@ namespace DevCassio
                     var farmAll = Q.GetCircularFarmLocation(allMinionsQ, Q.Width * 0.8f);
                     //if (farmAll.MinionsHit >= 2 || allMinionsQ.Count == 1)
                     {
-                        Q.Cast(farmAll.Position, packetCast);
+                        Q.Cast(farmAll.Position);
                         dtLastQCast = Environment.TickCount;
                         return;
                     }
@@ -383,7 +451,7 @@ namespace DevCassio
                     var farmNonPoisoned = W.GetCircularFarmLocation(allMinionsWNonPoisoned, W.Width * 0.8f);
                     if (farmNonPoisoned.MinionsHit >= 3)
                     {
-                        W.Cast(farmNonPoisoned.Position, packetCast);
+                        W.Cast(farmNonPoisoned.Position);
                         return;
                     }
                 }
@@ -393,7 +461,7 @@ namespace DevCassio
                     var farmAll = W.GetCircularFarmLocation(allMinionsW, W.Width * 0.8f);
                     if (farmAll.MinionsHit >= 2 || allMinionsW.Count == 1)
                     {
-                        W.Cast(farmAll.Position, packetCast);
+                        W.Cast(farmAll.Position);
                         return;
                     }
                 }
@@ -411,7 +479,7 @@ namespace DevCassio
                         if (UseELastHitLaneClear)
                         {
                             //var landTime = Q.Delay + 1000 * Player.Distance(minion) / 1400;
-                            if (GetEDamageToMinion(minion) * 0.9 > minion.Health)
+                                if (ObjectManager.Player.GetSpellDamage(minion, SpellSlot.E) * 0.9 > HealthPrediction.GetHealthPrediction(minion, (int)(E.Delay + (minion.Distance(ObjectManager.Player.Position) / E.Speed))))
                             {
                                 CastE(minion);
                             }
@@ -430,7 +498,7 @@ namespace DevCassio
             }
         }
 
-        private static double GetEDamageToMinion(Obj_AI_Base minion)
+        /*private static double GetEDamageToMinion(Obj_AI_Base minion)
         {
             // Workaround cause DamageLib does not have the correct values for Cassio
             var damageSpell = new DamageSpell { Slot = SpellSlot.E, DamageType = LeagueSharp.Common.Damage.DamageType.Magical, Damage = (source, target, level) => new double[] { 45, 85, 120, 155, 190 }[level] + (0.55 * source.FlatMagicDamageMod) };
@@ -456,7 +524,7 @@ namespace DevCassio
             k = k * (1 - target.PercentMagicReduction) * (1 + target.PercentMagicDamageMod);
 
             return k * amount;
-        }
+        }*/
 
         private static float GetPoisonBuffEndTime(Obj_AI_Base target)
         {
@@ -467,7 +535,7 @@ namespace DevCassio
             return buffEndTime;
         }
 
-        public static void Freeze()
+        /*public static void Freeze()
         {
             MinionList = MinionManager.GetMinions(Player.ServerPosition, Q.Range, MinionTypes.All, MinionTeam.Enemy, MinionOrderTypes.Health);
 
@@ -479,7 +547,7 @@ namespace DevCassio
 
             if (useE)
             {
-                foreach (var minion in MinionList.Where(x => x.HasBuffOfType(BuffType.Poison)).ToList())
+                foreach (var minion in MinionList)
                 {
                     var buffEndTime = GetPoisonBuffEndTime(minion);
 
@@ -493,8 +561,35 @@ namespace DevCassio
                 }
             }
 
-        }
+        }*/
 
+        private static void LastHit()
+        {
+            var castE = Config.Item("LastHitE").GetValue<bool>() && E.IsReady();
+            var LHE = Config.Item("UseELastHit").GetValue<bool>() && E.IsReady();
+            var minions = MinionManager.GetMinions(ObjectManager.Player.ServerPosition, Q.Range, MinionTypes.All, MinionTeam.NotAlly);
+
+            if (LHE)
+            {
+                foreach (var minion in minions)
+                {
+                    if (HealthPrediction.GetHealthPrediction(minion, (int)(E.Delay + (minion.Distance(ObjectManager.Player.Position) / E.Speed))) < ObjectManager.Player.GetSpellDamage(minion, SpellSlot.E))
+                    {
+                        E.Cast(minion);
+                    }
+                }
+            }
+            if (castE)
+            {
+                foreach (var minion in minions)
+                {
+                    if (HealthPrediction.GetHealthPrediction(minion, (int)(E.Delay + (minion.Distance(ObjectManager.Player.Position) / E.Speed))) < ObjectManager.Player.GetSpellDamage(minion, SpellSlot.E))
+                    {
+                        E.Cast(minion);
+                    }
+                }
+            }
+        }
         private static void JungleClear()
         {
             var mobs = MinionManager.GetMinions(Player.ServerPosition, Q.Range, MinionTypes.All, MinionTeam.Neutral, MinionOrderTypes.MaxHealth);
@@ -510,10 +605,10 @@ namespace DevCassio
 
             if (UseQJungleClear && Q.IsReady() && mob.IsValidTarget(Q.Range))
             {
-                Q.Cast(mob.ServerPosition, packetCast);
+                Q.Cast(mob.ServerPosition);
             }
 
-            if (UseEJungleClear && E.IsReady() && mob.HasBuffOfType(BuffType.Poison) && mob.IsValidTarget(E.Range))
+            if (UseEJungleClear && E.IsReady() && mob.IsValidTarget(E.Range))
             {
                 CastE(mob);
             }
@@ -530,7 +625,7 @@ namespace DevCassio
                 {
                     if (eTarget.IsValidTarget(R.Range) && eTarget.IsUnderEnemyTurret() && R.IsReady() && !eTarget.IsInvulnerable)
                     {
-                        R.Cast(eTarget.ServerPosition, packetCast);
+                        R.Cast(eTarget.ServerPosition);
                     }
                 }
             }
@@ -550,7 +645,7 @@ namespace DevCassio
             {
                 if (Environment.TickCount > dtLastECast + LegitCastDelay)
                 {
-                    E.CastOnUnit(unit, packetCast);
+                    E.CastOnUnit(unit);
                     dtLastECast = Environment.TickCount;
                 }
                 else if (mustDebug)
@@ -560,7 +655,7 @@ namespace DevCassio
             }
             else
             {
-                E.CastOnUnit(unit, packetCast);
+                E.CastOnUnit(unit);
                 dtLastECast = Environment.TickCount;
             }
         }
@@ -575,7 +670,7 @@ namespace DevCassio
 
             if (eTarget.IsValidTarget(R.Range) && R.IsReady())
             {
-                R.Cast(eTarget.ServerPosition, packetCast);
+                R.Cast(eTarget.ServerPosition);
             }
 
         }
@@ -591,7 +686,7 @@ namespace DevCassio
 
                 InitializeSpells();
 
-                InitializeSkinManager();
+                /*InitializeSkinManager();*/
 
                 InitializeLevelUpManager();
 
@@ -634,6 +729,7 @@ namespace DevCassio
             AntiGapcloser.OnEnemyGapcloser += AntiGapcloser_OnEnemyGapcloser;
             //Interrupter.OnPossibleToInterrupt += Interrupter_OnPossibleToInterrupt;
             Interrupter2.OnInterruptableTarget += Interrupter2_OnInterruptableTarget;
+            Spellbook.OnCastSpell += Spellbook_OnCastSpell;
             Orbwalking.BeforeAttack += Orbwalking_BeforeAttack;
             GameObject.OnCreate += GameObject_OnCreate;
             
@@ -661,13 +757,30 @@ namespace DevCassio
 
             if (RInterrupetSpell && Player.GetHealthPerc() < RAntiGapcloserMinHealth && sender.IsValidTarget(R.Range) && args.DangerLevel >= Interrupter2.DangerLevel.High)
             {
-                if (R.CastIfHitchanceEquals(sender, sender.IsMoving ? HitChance.High : HitChance.Medium, packetCast))
+                if (R.CastIfHitchanceEquals(sender, sender.IsMoving ? HitChance.High : HitChance.Medium))
                     Game.PrintChat(string.Format("OnPosibleToInterrupt -> RInterrupetSpell on {0} !", sender.SkinName));
             }
         }
 
+        private static void Spellbook_OnCastSpell(Spellbook sender, SpellbookCastSpellEventArgs args)
+        {
+            var enemy = Orbwalker.GetTarget() as Obj_AI_Hero;
+            var enemyr = HeroManager.Enemies.Where(x => R.WillHit(enemy, args.Target.Position));
+            if (Config.Item("BlockR").GetValue<bool>())
+            {
+                return;
+            }
+            else
+            /*var query = DevHelper.GetEnemyList().Where(x => !R.WillHit(enemy, args.StartPosition));*/
+            /*if (HeroManager.Enemies.All(enemy => !enemy.IsValidTarget(R.Range) || !R.WillHit(enemy, args.StartPosition)))*/
+            if (Config.Item("BlockR").GetValue<bool>() && enemyr.Count() == 0)
+            {
+                args.Process = false;
+                Game.PrintChat(string.Format("Ult Blocked"));
+            }
+        }
 
-        static void GameObject_OnCreate(GameObject sender, EventArgs args)
+            static void GameObject_OnCreate(GameObject sender, EventArgs args)
         {
 
         }
@@ -694,16 +807,16 @@ namespace DevCassio
                 Game.PrintChat("InitializeSpells Start");
 
             Q = new Spell(SpellSlot.Q, 850);
-            Q.SetSkillshot(0.6f, 40f, float.MaxValue, false, SkillshotType.SkillshotCircle);
+            Q.SetSkillshot(0.7f, 75f, float.MaxValue, false, SkillshotType.SkillshotCircle);
 
-            W = new Spell(SpellSlot.W, 850);
-            W.SetSkillshot(0.5f, 90f, 2500, false, SkillshotType.SkillshotCircle);
+            W = new Spell(SpellSlot.W, 800);
+            W.SetSkillshot(0.75f, 160f, 1000, false, SkillshotType.SkillshotCircle);
 
             E = new Spell(SpellSlot.E, 700);
-            E.SetTargetted(0.2f, float.MaxValue);
+            E.SetTargetted(0.125f, 1000);
 
-            R = new Spell(SpellSlot.R, 800);
-            R.SetSkillshot(0.6f, (float)(80 * Math.PI / 180), float.MaxValue, false, SkillshotType.SkillshotCone);
+            R = new Spell(SpellSlot.R, 825);
+            R.SetSkillshot(0.5f, (float)(80 * Math.PI / 180), 3200, false, SkillshotType.SkillshotCone);
 
             SpellList.Add(Q);
             SpellList.Add(W);
@@ -716,7 +829,7 @@ namespace DevCassio
                 Game.PrintChat("InitializeSpells Finish");
         }
 
-        private static void InitializeSkinManager()
+        /*private static void InitializeSkinManager()
         {
             if (mustDebug)
                 Game.PrintChat("InitializeSkinManager Start");
@@ -730,7 +843,7 @@ namespace DevCassio
 
             if (mustDebug)
                 Game.PrintChat("InitializeSkinManager Finish");
-        }
+        }*/
 
         private static void InitializeLevelUpManager()
         {
@@ -808,7 +921,7 @@ namespace DevCassio
 
             if (RAntiGapcloser && Player.GetHealthPerc() <= RAntiGapcloserMinHealth && gapcloser.Sender.IsValidTarget(R.Range) && R.IsReady() && !gapcloser.Sender.IsInvulnerable)
             {
-                R.Cast(gapcloser.Sender.ServerPosition, packetCast);
+                R.Cast(gapcloser.Sender.ServerPosition);
             }
         }
 
@@ -864,7 +977,7 @@ namespace DevCassio
             Config.AddSubMenu(new Menu("Ultimate", "Ultimate"));
             Config.SubMenu("Ultimate").AddItem(new MenuItem("UseAssistedUlt", "Use AssistedUlt").SetValue(true));
             Config.SubMenu("Ultimate").AddItem(new MenuItem("AssistedUltKey", "Assisted Ult Key").SetValue((new KeyBind("R".ToCharArray()[0], KeyBindType.Press))));
-            Config.SubMenu("Ultimate").AddItem(new MenuItem("BlockUlt", "Block Ult will Not Hit").SetValue(true));
+            Config.SubMenu("Ultimate").AddItem(new MenuItem("BlockR", "Block Ult When 0 Hit").SetValue(true));
             Config.SubMenu("Ultimate").AddItem(new MenuItem("UseUltUnderTower", "Ult Enemy Under Tower").SetValue(true));
             Config.SubMenu("Ultimate").AddItem(new MenuItem("UltRange", "Ultimate Range").SetValue(new Slider(650, 0, 800)));
             Config.SubMenu("Ultimate").AddItem(new MenuItem("RMinHit", "Min Enemies Hit").SetValue(new Slider(2, 1, 5)));
@@ -877,6 +990,9 @@ namespace DevCassio
             Config.SubMenu("Combo").AddItem(new MenuItem("UseRCombo", "Use R").SetValue(true));
             Config.SubMenu("Combo").AddItem(new MenuItem("UseIgnite", "Use Ignite").SetValue(true));
             Config.SubMenu("Combo").AddItem(new MenuItem("UseAACombo", "Use AA in Combo").SetValue(true));
+            Config.SubMenu("Combo").AddItem(new MenuItem("ProbeltR", "Use Problet R").SetValue(false));
+            Config.SubMenu("Combo").AddItem(new MenuItem("Rflash", "Use Flash R").SetValue(true)).SetValue((new KeyBind("J".ToCharArray()[0], KeyBindType.Press)));
+            Config.SubMenu("Combo").AddItem(new MenuItem("Rminflash", "Min Enemies F + R").SetValue(new Slider(2, 1, 5)));
             Config.SubMenu("Combo").AddItem(new MenuItem("UseRSaveYourself", "Use R Save Yourself").SetValue(true));
             Config.SubMenu("Combo").AddItem(new MenuItem("UseRSaveYourselfMinHealth", "Use R Save MinHealth").SetValue(new Slider(25, 0, 100)));
 
@@ -885,9 +1001,10 @@ namespace DevCassio
             Config.SubMenu("Harass").AddItem(new MenuItem("UseQHarass", "Use Q").SetValue(true));
             Config.SubMenu("Harass").AddItem(new MenuItem("UseWHarass", "Use W").SetValue(false));
             Config.SubMenu("Harass").AddItem(new MenuItem("UseEHarass", "Use E").SetValue(true));
+            Config.SubMenu("Harass").AddItem(new MenuItem("LastHitE", "LastHit E While Harass").SetValue(false));
 
-            Config.AddSubMenu(new Menu("Freeze", "Freeze"));
-            Config.SubMenu("Freeze").AddItem(new MenuItem("UseEFreeze", "Use E").SetValue(true));
+            Config.AddSubMenu(new Menu("LastHit", "LastHit"));
+            Config.SubMenu("LastHit").AddItem(new MenuItem("UseELastHit", "Use E").SetValue(true));
 
             Config.AddSubMenu(new Menu("LaneClear", "LaneClear"));
             Config.SubMenu("LaneClear").AddItem(new MenuItem("UseQLaneClear", "Use Q").SetValue(true));
@@ -907,7 +1024,7 @@ namespace DevCassio
             Config.SubMenu("Gapcloser").AddItem(new MenuItem("RAntiGapcloserMinHealth", "R AntiGapcloser Min Health").SetValue(new Slider(60, 0, 100)));
 
             Config.AddSubMenu(new Menu("Misc", "Misc"));
-            Config.SubMenu("Misc").AddItem(new MenuItem("PacketCast", "No-Face Exploit (PacketCast)").SetValue(true));
+            Config.SubMenu("Misc").AddItem(new MenuItem("PacketCast", "No-Face Exploit (PacketCast)").SetValue(true)).SetTooltip("Packet Does Not Work");
 
             Config.AddSubMenu(new Menu("Im Legit! :)", "Legit"));
             Config.SubMenu("Legit").AddItem(new MenuItem("PlayLegit", "Play Legit :)").SetValue(false));
@@ -921,7 +1038,18 @@ namespace DevCassio
             Config.SubMenu("Drawings").AddItem(new MenuItem("RRange", "R Range").SetValue(new Circle(false, System.Drawing.Color.FromArgb(255, 255, 255, 255))));
             Config.SubMenu("Drawings").AddItem(new MenuItem("EDamage", "Show E Damage on HPBar").SetValue(true));
 
-            skinManager.AddToMenu(ref Config);
+            Config.AddSubMenu(new Menu("Skins Menu", "SkinMenu"));
+            Config.SubMenu("SkinMenu").AddItem(new MenuItem("SkinID", "Skin ID")).SetValue(new Slider(4, 0, 8));
+            var UseSkin = Config.SubMenu("UseSkin").AddItem(new MenuItem("UseSkin", "Enabled Skin Change").SetValue(true));
+            UseSkin.ValueChanged += (sender, eventArgs) =>
+            {
+                if (!eventArgs.GetNewValue<bool>())
+                {
+                    ObjectManager.Player.SetSkin(ObjectManager.Player.CharData.BaseSkinName, ObjectManager.Player.BaseSkinId);
+                }
+            };
+
+            /* skinManager.AddToMenu(ref Config);*/
 
             levelUpManager.AddToMenu(ref Config);
 
